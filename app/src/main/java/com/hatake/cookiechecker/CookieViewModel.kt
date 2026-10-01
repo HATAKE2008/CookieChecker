@@ -80,11 +80,18 @@ class CookieViewModel : ViewModel() {
 
     // ---- Actions ----
     fun start() {
-        if (_ui.value.items.isEmpty()) loadFromInput()
-        if (_ui.value.items.isEmpty()) {
-            _ui.update { it.copy(errorMessage = "Paste cookies or import a file first.") }
-            return
+        // NOTE: read repository.items.value directly (synchronous).
+        // _ui.value.items is only an async mirror and is still empty
+        // right after parsing, which used to abort every first Start tap.
+        if (repository.items.value.isEmpty()) {
+            val parsed = FileParser.extractCookiesFromText(_ui.value.inputText)
+            if (parsed.isEmpty()) {
+                _ui.update { it.copy(errorMessage = "Paste cookies or import a file first.") }
+                return
+            }
+            repository.setCookies(parsed)
         }
+        if (repository.running) return // already checking
         _ui.update { it.copy(isRunning = true, isPaused = false, errorMessage = null) }
         repository.start(
             delayMs = _ui.value.delayMs,

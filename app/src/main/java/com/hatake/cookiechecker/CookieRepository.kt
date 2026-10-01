@@ -44,6 +44,8 @@ class CookieRepository(
         val snapshot = _items.value
         if (snapshot.isEmpty()) return
         paused = false
+        // Reset previous results so a re-run restarts the progress cleanly
+        _items.value = snapshot.map { it.copy(status = CookieStatus.PENDING, detail = "", latencyMs = 0L) }
         val permits = concurrency.coerceIn(1, 8)
         job = scope.launch {
             val semaphore = Semaphore(permits)
