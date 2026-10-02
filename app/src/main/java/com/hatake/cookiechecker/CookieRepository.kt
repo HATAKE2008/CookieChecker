@@ -45,6 +45,11 @@ class CookieRepository(
         _items.value = emptyList()
     }
 
+    /** External engines (e.g. WebView login-check) report per-item results here. */
+    fun setResult(id: Int, status: CookieStatus, detail: String, latencyMs: Long) {
+        update(id) { it.copy(status = status, detail = detail, latencyMs = latencyMs) }
+    }
+
     fun start(delayMs: Long, concurrency: Int, targetUrl: String, onItem: (CookieItem) -> Unit = {}) {
         if (_running) {
             Log.d(TAG, "STAGE3 worker NOT started (already running)")

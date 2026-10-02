@@ -1,27 +1,38 @@
 package com.hatake.cookiechecker
 
+import android.app.Application
 import android.content.ContentResolver
 import android.net.Uri
 import android.util.Log
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 
 private const val TAG = "CookieChecker"
 
-class CookieViewModel : ViewModel() {
+class CookieViewModel(app: Application) : AndroidViewModel(app) {
 
     private val service = CookieCheckerService()
     private val repository = CookieRepository(service, viewModelScope)
+
+    private val liveFile = File(app.filesDir, "live_cookies.txt")
+
+    private val _savedLive = MutableStateFlow<List<String>>(emptyList())
+    val savedLive: StateFlow<List<String>> = _savedLive.asStateFlow()
 
     private val _ui = MutableStateFlow(CookieUiState())
     val ui: StateFlow<CookieUiState> = _ui.asStateFlow()
 
     init {
+        // Load previously saved LIVE cookies
+        viewModelScope.launch { _savedLive.value = readSavedLive() }
         // Mirror repository items into UI state
         viewModelScope.launch {
             repository.items.collect { items ->
@@ -145,4 +156,50 @@ class CookieViewModel : ViewModel() {
     fun markExported(path: String) {
         _ui.update { it.copy(exportedMessage = "Exported: $path") }
     }
+
+    // ---- WebView login-check engine support ----
+    fun webCheckResult(id: Int, status: CookieStatus, detail: String, latencyMs: Long) {
+        repository.setResult(id, status, detail, latencyMs)
+    }
+
+    fun queueForWebCheck(): List<CookieItem> = repository.items.value
+
+    /** Make sure pasted text is parsed into the queue. False = nothing to check. */
+    fun ensureQueueFromInput(): Boolean {
+        if (repository.items.value.isNotEmpty()) return true
+        val parsed = FileParser.extractCookiesFromText(_ui.value.inputText)
+        if (parsed.isEmpty()) return false
+        repository.setCookies(parsed)
+        return true
+    }
+
+    // ---- Saved LIVE cookies (persisted to live_cookies.txt) ----
+    private suspend fun readSavedLive(): List<String> = withContext(Dispatchers.IO) {
+        try {
+            if (liveFile.exists()) {
+                liveFile.readLines().map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+            } else {
+                emptyList()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "read saved live failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    fun saveLiveCookie(raw: String) {
+        val cookie = raw.trim()
+        if (cookie.isEmpty() || _savedLive.value.contains(cookie)) return
+        _savedLive.update { it + cookie }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                liveFile.appendText(cookie + "\n")
+                Log.d(TAG, "WEBCHECK saved live cookie (${_savedLive.value.size} total)")
+            } catch (e: Exception) {
+                Log.e(TAG, "save live failed: ${e.message}")
+            }
+        }
+    }
+
+    fun savedLiveText(): String = _savedLive.value.joinToString("\n")
 }

@@ -54,28 +54,6 @@ fun CookieWebViewScreen(cookie: String, onClose: () -> Unit) {
 
 /** Same parsing as the bookmarklet: pipe-split picks the c_user segment, then k=v pairs. */
 private fun injectBookmarkletCookie(raw: String) {
-    var cookieStr = raw
-    if (raw.contains('|')) {
-        for (part in raw.split('|')) {
-            if (part.contains("c_user=")) {
-                cookieStr = part
-                break
-            }
-        }
-    }
-    val cm = CookieManager.getInstance()
-    cm.setAcceptCookie(true)
-    cm.removeAllCookies(null)
-    var count = 0
-    for (item in cookieStr.split(';')) {
-        val eq = item.indexOf('=')
-        if (eq <= 0) continue
-        val k = item.substring(0, eq).trim()
-        val v = item.substring(eq + 1).trim()
-        if (k.isEmpty()) continue
-        cm.setCookie("https://.facebook.com", "$k=$v; Path=/; Domain=.facebook.com")
-        count++
-    }
-    cm.flush()
+    val count = com.hatake.cookiechecker.CookieInjector.inject(raw)
     Log.d(TAG, "WEBVIEW injected $count pairs, loading $MBASIC")
 }

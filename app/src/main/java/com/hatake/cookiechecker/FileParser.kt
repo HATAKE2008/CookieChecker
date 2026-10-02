@@ -36,8 +36,9 @@ object FileParser {
             }
             // Bookmarklet-style: pipe-separated segments, pick the c_user one
             if (line.contains('|')) {
-                line.split('|').map { it.trim() }.firstOrNull { isCookie(it) }?.let {
-                    out += normalize(it)
+                val seg = line.split('|').map { it.trim() }.firstOrNull { isCookie(it) }
+                if (seg != null) {
+                    out += normalize(seg)
                     continue
                 }
             }

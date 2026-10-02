@@ -53,9 +53,14 @@ fun MainScreen(vm: CookieViewModel) {
     val snack = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var openCookie by remember { mutableStateOf<String?>(null) }
+    var webCheck by remember { mutableStateOf(false) }
 
     openCookie?.let { raw ->
         CookieWebViewScreen(cookie = raw, onClose = { openCookie = null })
+        return
+    }
+    if (webCheck) {
+        WebLoginCheckScreen(vm = vm, onClose = { webCheck = false })
         return
     }
 
@@ -143,6 +148,16 @@ fun MainScreen(vm: CookieViewModel) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (!state.isRunning) {
                     Button(onClick = vm::start, modifier = Modifier.weight(1f)) { Text("Start check") }
+                    OutlinedButton(
+                        onClick = {
+                            if (vm.ensureQueueFromInput()) {
+                                webCheck = true
+                            } else {
+                                scope.launch { snack.showSnackbar("Paste or import cookies first") }
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Web login") }
                 } else if (!state.isPaused) {
                     OutlinedButton(onClick = vm::pause, modifier = Modifier.weight(1f)) { Text("Pause") }
                     OutlinedButton(onClick = vm::cancel, modifier = Modifier.weight(1f)) { Text("Stop") }
