@@ -32,12 +32,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.hatake.cookiechecker.CookieStatus
 import com.hatake.cookiechecker.CookieViewModel
 import com.hatake.cookiechecker.ResultFilter
 import kotlinx.coroutines.launch
@@ -49,6 +52,12 @@ fun MainScreen(vm: CookieViewModel) {
     val ctx = LocalContext.current
     val snack = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    var openCookie by remember { mutableStateOf<String?>(null) }
+
+    openCookie?.let { raw ->
+        CookieWebViewScreen(cookie = raw, onClose = { openCookie = null })
+        return
+    }
 
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -176,7 +185,16 @@ fun MainScreen(vm: CookieViewModel) {
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                items(state.visibleItems, key = { it.id }) { CookieRow(it) }
+                items(state.visibleItems, key = { it.id }) { item ->
+                    CookieRow(
+                        item = item,
+                        onOpen = if (item.status == CookieStatus.LIVE) {
+                            { openCookie = item.raw }
+                        } else {
+                            null
+                        }
+                    )
+                }
             }
         }
     }

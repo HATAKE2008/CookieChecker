@@ -34,6 +34,13 @@ object FileParser {
                 out += normalize(line)
                 continue
             }
+            // Bookmarklet-style: pipe-separated segments, pick the c_user one
+            if (line.contains('|')) {
+                line.split('|').map { it.trim() }.firstOrNull { isCookie(it) }?.let {
+                    out += normalize(it)
+                    continue
+                }
+            }
             // Buried hit: find longest token-run containing c_user
             extractBuried(line)?.let { out += it }
         }

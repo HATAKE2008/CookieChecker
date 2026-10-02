@@ -13,6 +13,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -63,7 +64,7 @@ fun CheckProgress(progress: Float, checked: Int, total: Int) {
 }
 
 @Composable
-fun CookieRow(item: CookieItem) {
+fun CookieRow(item: CookieItem, onOpen: (() -> Unit)? = null) {
     val (label, color) = when (item.status) {
         CookieStatus.LIVE -> "LIVE" to androidx.compose.ui.graphics.Color(0xFF1B7A2E)
         CookieStatus.DEAD -> "DEAD" to androidx.compose.ui.graphics.Color(0xFFB3261E)
@@ -98,6 +99,9 @@ fun CookieRow(item: CookieItem) {
                         color = MaterialTheme.colorScheme.outline
                     )
                 }
+            }
+            if (item.status == CookieStatus.LIVE && onOpen != null) {
+                TextButton(onClick = onOpen) { Text("Open") }
             }
         }
     }
