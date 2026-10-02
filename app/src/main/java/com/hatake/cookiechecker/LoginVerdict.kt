@@ -9,7 +9,7 @@ object LoginVerdict {
 
     data class Verdict(val status: CookieStatus, val detail: String)
 
-    fun decide(url: String, html: String, userId: String = ""): Verdict {
+    fun decide(url: String, html: String, userId: String = "", title: String = ""): Verdict {
         val u = url.lowercase()
         val lower = html.lowercase()
         // URL verdicts are authoritative (unescaped, final after redirects)
@@ -48,6 +48,14 @@ object LoginVerdict {
         }
         if (lower.contains("checkpoint")) {
             return Verdict(CookieStatus.DEAD, "checkpoint")
+        }
+        // Title tiebreak for marker-less pages ("Log in to Facebook" vs "Facebook")
+        val t = title.lowercase()
+        if (t.contains("log in") || t.contains("login")) {
+            return Verdict(CookieStatus.DEAD, "title-login")
+        }
+        if (t == "facebook" || t == "home") {
+            return Verdict(CookieStatus.LIVE, "title-home")
         }
         return Verdict(CookieStatus.DEAD, "no-auth-markers len=${html.length}")
     }

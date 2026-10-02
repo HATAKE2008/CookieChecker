@@ -64,6 +64,11 @@ fun WebLoginCheckScreen(vm: CookieViewModel, onClose: () -> Unit) {
     var finished by remember { mutableStateOf(false) }
     var currentText by remember { mutableStateOf("Preparing…") }
     var lastVerdict by remember { mutableStateOf("") }
+    // Navigation generation: only verdicts from the CURRENT load count.
+    // (Fixes instant false-DEADs read from the previous account's page.)
+    var navGen by remember { mutableStateOf(0) }
+    var finishedGen by remember { mutableStateOf(-1) }
+    var finishedUrl by remember { mutableStateOf("") }
 
     BackHandler(onBack = { goOn = false; onClose() })
     DisposableEffect(Unit) {
@@ -88,8 +93,17 @@ fun WebLoginCheckScreen(vm: CookieViewModel, onClose: () -> Unit) {
             val pairs = CookieInjector.inject(item.raw)
             Log.d(TAG, "WEBCHECK item #${item.id} injected $pairs pairs, loading $MBASIC")
             wv.loadUrl(MBASIC)
-            val verdict = awaitVerdict(wv, { goOn && !finished }, { paused },
-                com.hatake.cookiechecker.CookieTools.extractUserId(item.raw))
+            navGen++
+            finishedUrl = ""
+            val verdict = awaitVerdict(
+                wv = wv,
+                myGen = { navGen },
+                finishedGen = { finishedGen },
+                finishedUrl = { finishedUrl },
+                keepGoing = { goOn && !finished },
+                isPaused = { paused },
+                userId = com.hatake.cookiechecker.CookieTools.extractUserId(item.raw)
+            )
             val latency = SystemClock.elapsedRealtime() - t0
             if (verdict == null) {
                 Log.d(TAG, "WEBCHECK item #${item.id} stopped by user")
@@ -166,7 +180,16 @@ fun WebLoginCheckScreen(vm: CookieViewModel, onClose: () -> Unit) {
                         CookieManager.getInstance().setAcceptCookie(true)
                         CookieManager.getInstance()
                             .setAcceptThirdPartyCookies(this, true)
-                        webViewClient = WebViewClient()
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageFinished(view: WebView, url: String?) {
+                                super.onPageFinished(view, url)
+                                // Main frame only: ignore stale/iframe callbacks
+                                if (url != null && view.url == url) {
+                                    finishedUrl = url
+                                    finishedGen = navGen
+                                }
+                            }
+                        }
                         webView = this
                     }
                 }
@@ -181,47 +204,95 @@ fun WebLoginCheckScreen(vm: CookieViewModel, onClose: () -> Unit) {
     }
 }
 
-/** Poll page URL + HTML until conclusive or timeout. Null = aborted by user. */
+/** Wait for the CURRENT navigation to finish, then verdict. Null = aborted by user. */
 private suspend fun awaitVerdict(
     wv: WebView,
+    myGen: () -> Int,
+    finishedGen: () -> Int,
+    finishedUrl: () -> String,
     keepGoing: () -> Boolean,
     isPaused: () -> Boolean,
     userId: String
 ): LoginVerdict.Verdict? {
     val t0 = SystemClock.elapsedRealtime()
-    var url = ""
-    var html = ""
+    val gen = myGen()
+    // Phase 1: wait until THIS load finishes (ignore previous account's page)
     while (SystemClock.elapsedRealtime() - t0 < VERDICT_TIMEOUT_MS) {
         if (!keepGoing()) return null
         while (isPaused() && keepGoing()) delay(300)
         if (!keepGoing()) return null
-        url = try {
-            wv.url.orEmpty()
-        } catch (_: Exception) {
-            ""
+        if (finishedGen() == gen && finishedUrl().isNotEmpty()) break
+        delay(500)
+    }
+    if (finishedGen() != gen || finishedUrl().isEmpty()) {
+        return LoginVerdict.Verdict(CookieStatus.ERROR, "webview-no-load")
+    }
+    // Phase 2: settle (JS/meta redirects), then read HTML until conclusive
+    var lastU = ""
+    var html = ""
+    var title = ""
+    while (SystemClock.elapsedRealtime() - t0 < VERDICT_TIMEOUT_MS + 15_000L) {
+        if (!keepGoing()) return null
+        while (isPaused() && keepGoing()) delay(300)
+        if (!keepGoing()) return null
+        // A newer navigation started (redirect chain) -> re-settle on the new URL
+        val u = finishedUrl()
+        if (u != lastU) {
+            lastU = u
+            interruptibleDelay(2000L, keepGoing, isPaused) ?: return null
+            continue
         }
-        html = wv.evalHtml()
-        if (LoginVerdict.isConclusive(url, html)) {
-            val v = LoginVerdict.decide(url, html, userId)
-            android.util.Log.d(TAG, "WEBCHECK settled url=$url")
-            return v
+        html = wv.evalJs(HTML_JS)
+        if (LoginVerdict.isConclusive(u, html)) {
+            title = wv.evalJs(TITLE_JS).cleanJsString()
+            val v = LoginVerdict.decide(u, html, userId, title)
+            android.util.Log.d(TAG, "WEBCHECK settled url=$u title=\"$title\"")
+            return v.copy(detail = "${v.detail} • ${shortUrl(u)} • \"$title\"")
         }
         delay(1000)
     }
+    title = wv.evalJs(TITLE_JS).cleanJsString()
     if (html.isBlank()) {
-        return LoginVerdict.Verdict(CookieStatus.ERROR, "webview-timeout url=$url")
+        return LoginVerdict.Verdict(CookieStatus.ERROR, "webview-timeout • ${shortUrl(lastU)}")
     }
-    return LoginVerdict.decide(url, html, userId)
+    val v = LoginVerdict.decide(lastU, html, userId, title)
+    return v.copy(detail = "${v.detail} • ${shortUrl(lastU)} • \"$title\"")
 }
 
-private suspend fun WebView.evalHtml(): String {
+private suspend fun interruptibleDelay(ms: Long, keepGoing: () -> Boolean, isPaused: () -> Boolean): Boolean {
+    var left = ms
+    while (left > 0) {
+        if (!keepGoing()) return false
+        delay(250)
+        left -= 250
+    }
+    return true
+}
+
+private const val HTML_JS =
+    "(function(){try{return document.documentElement.outerHTML.slice(0,150000);}catch(e){return '';}})()"
+private const val TITLE_JS =
+    "(function(){try{return document.title||'';}catch(e){return '';}})()"
+
+private suspend fun WebView.evalJs(code: String): String {
     return try {
         suspendCancellableCoroutine { cont ->
-            evaluateJavascript(
-                "(function(){try{return document.documentElement.outerHTML.slice(0,150000);}catch(e){return '';}})()"
-            ) { v -> cont.resume(v ?: "") }
+            evaluateJavascript(code) { v -> cont.resume(v ?: "") }
         }
     } catch (_: Exception) {
         ""
     }
+}
+
+/** "Log in to Facebook" -> Log in to Facebook (strip JSON quoting from JS bridge). */
+private fun String.cleanJsString(): String {
+    var s = trim()
+    if (s.length >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
+        s = s.substring(1, s.length - 1)
+    }
+    return s.replace("\\\"", "\"").replace("\\n", " ").replace("\\\\", "\\").take(34)
+}
+
+private fun shortUrl(u: String): String {
+    return u.replace("https://", "").replace("http://", "").take(48)
 }

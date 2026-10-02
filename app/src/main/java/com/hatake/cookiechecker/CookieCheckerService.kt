@@ -93,15 +93,24 @@ class CookieCheckerService(
         return classifyBody(body, latency, userId)
     }
 
+    private val TITLE_RE = Regex("<title[^>]*>(.*?)</title>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+
+    private fun pageTitle(body: String): String {
+        return TITLE_RE.find(body)?.groupValues?.getOrNull(1)
+            ?.replace(Regex("\\s+"), " ")?.trim()?.take(34).orEmpty()
+    }
+
     private fun classifyBody(body: String, latency: Long, userId: String = ""): CheckOutcome {
         if (body.isBlank()) return CheckOutcome(CookieStatus.ERROR, "empty-body", latency)
         val lower = body.lowercase()
+        val title = pageTitle(body)
+        val tag = if (title.isNotEmpty()) " • \"$title\"" else ""
         // STRONG DEAD: password field exists (never on a logged-in home)
         if (lower.contains("type=\"password\"") || lower.contains("type='password'") ||
             lower.contains("name=\"pass\"") || lower.contains("name='pass'") ||
             lower.contains("id=\"login_form\"") || lower.contains("id='login_form'")
         ) {
-            return CheckOutcome(CookieStatus.DEAD, "login-form", latency)
+            return CheckOutcome(CookieStatus.DEAD, "login-form$tag", latency)
         }
         // Dead markers (login page)
         if (lower.contains("mbasic_inline_login_button") ||
@@ -109,11 +118,11 @@ class CookieCheckerService(
             lower.contains("name='login'") ||
             (lower.contains("/login") && lower.contains("password"))
         ) {
-            return CheckOutcome(CookieStatus.DEAD, "login-page", latency)
+            return CheckOutcome(CookieStatus.DEAD, "login-page$tag", latency)
         }
         // STRONG LIVE: our own user id embedded in the page
         if (userId.isNotEmpty() && body.contains(userId)) {
-            return CheckOutcome(CookieStatus.LIVE, "user-id-match", latency)
+            return CheckOutcome(CookieStatus.LIVE, "user-id-match$tag", latency)
         }
         // Live markers
         if (lower.contains("mbasic_logout_button") ||
@@ -123,13 +132,21 @@ class CookieCheckerService(
             lower.contains("log out") ||
             lower.contains("composer") && lower.contains("what's on your mind")
         ) {
-            return CheckOutcome(CookieStatus.LIVE, "authenticated", latency)
+            return CheckOutcome(CookieStatus.LIVE, "authenticated$tag", latency)
         }
         // Heuristic fallback: checkpoint wording = dead
         if (lower.contains("checkpoint")) {
-            return CheckOutcome(CookieStatus.DEAD, "checkpoint", latency)
+            return CheckOutcome(CookieStatus.DEAD, "checkpoint$tag", latency)
         }
-        return CheckOutcome(CookieStatus.DEAD, "no-auth-markers len=${body.length}", latency)
+        // Title tiebreak for marker-less pages
+        val t = title.lowercase()
+        if (t.contains("log in") || t.contains("login")) {
+            return CheckOutcome(CookieStatus.DEAD, "title-login$tag", latency)
+        }
+        if (t == "facebook" || t == "home") {
+            return CheckOutcome(CookieStatus.LIVE, "title-home$tag", latency)
+        }
+        return CheckOutcome(CookieStatus.DEAD, "no-auth-markers len=${body.length}$tag", latency)
     }
 
     data class CheckOutcome(
