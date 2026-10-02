@@ -34,14 +34,16 @@ class CookieCheckerService(
         withContext(Dispatchers.IO) {
             val start = System.currentTimeMillis()
             val url = targetUrl.ifBlank { DEFAULT_TARGET }
-            Log.d(TAG, "STAGE5 $label request started target=$url cookieLen=${cookie.length}")
+            val header = CookieTools.sanitizeHeader(cookie)
+            val userId = CookieTools.extractUserId(cookie)
+            Log.d(TAG, "STAGE5 $label request started target=$url pairs=${header.split(';').size} userId=${userId.takeLast(4).padStart(userId.length, '*')}")
             try {
                 val request = Request.Builder()
                     .url(url)
                     .header("User-Agent", MOBILE_UA)
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                     .header("Accept-Language", "en-US,en;q=0.9")
-                    .header("Cookie", cookie)
+                    .header("Cookie", header)
                     .get()
                     .build()
 
@@ -55,7 +57,8 @@ class CookieCheckerService(
                     } catch (_: Exception) {
                         ""
                     }
-                    val outcome = decide(code, location, body, latency)
+                    Log.d(TAG, "STAGE5 $label body len=${body.length} snippet=${body.take(220).replace(Regex("\\s+"), " ")}")
+                    val outcome = decide(code, location, body, latency, userId)
                     Log.d(TAG, "STAGE5 $label verdict=${outcome.status} (${outcome.detail}) latency=${outcome.latencyMs}ms")
                     return@withContext outcome
                 }
@@ -72,7 +75,7 @@ class CookieCheckerService(
             }
         }
 
-    private fun decide(code: Int, location: String, body: String, latency: Long): CheckOutcome {
+    private fun decide(code: Int, location: String, body: String, latency: Long, userId: String = ""): CheckOutcome {
         // --- Redirect-based verdicts (cheap, no body read) ---
         if (location.contains("/login", ignoreCase = true) ||
             location.contains("checkpoint", ignoreCase = true)
@@ -87,13 +90,20 @@ class CookieCheckerService(
             return CheckOutcome(CookieStatus.DEAD, "redirect->$location", latency)
         }
         // --- Body-based verdicts ---
-        return classifyBody(body, latency)
+        return classifyBody(body, latency, userId)
     }
 
-    private fun classifyBody(body: String, latency: Long): CheckOutcome {
+    private fun classifyBody(body: String, latency: Long, userId: String = ""): CheckOutcome {
         if (body.isBlank()) return CheckOutcome(CookieStatus.ERROR, "empty-body", latency)
         val lower = body.lowercase()
-        // Dead markers first (login page)
+        // STRONG DEAD: password field exists (never on a logged-in home)
+        if (lower.contains("type=\"password\"") || lower.contains("type='password'") ||
+            lower.contains("name=\"pass\"") || lower.contains("name='pass'") ||
+            lower.contains("id=\"login_form\"") || lower.contains("id='login_form'")
+        ) {
+            return CheckOutcome(CookieStatus.DEAD, "login-form", latency)
+        }
+        // Dead markers (login page)
         if (lower.contains("mbasic_inline_login_button") ||
             lower.contains("name=\"login\"") ||
             lower.contains("name='login'") ||
@@ -101,11 +111,16 @@ class CookieCheckerService(
         ) {
             return CheckOutcome(CookieStatus.DEAD, "login-page", latency)
         }
+        // STRONG LIVE: our own user id embedded in the page
+        if (userId.isNotEmpty() && body.contains(userId)) {
+            return CheckOutcome(CookieStatus.LIVE, "user-id-match", latency)
+        }
         // Live markers
         if (lower.contains("mbasic_logout_button") ||
             lower.contains("mbasic_logout") ||
             lower.contains("home.php") ||
             lower.contains("name=\"logout\"") ||
+            lower.contains("log out") ||
             lower.contains("composer") && lower.contains("what's on your mind")
         ) {
             return CheckOutcome(CookieStatus.LIVE, "authenticated", latency)
@@ -114,7 +129,7 @@ class CookieCheckerService(
         if (lower.contains("checkpoint")) {
             return CheckOutcome(CookieStatus.DEAD, "checkpoint", latency)
         }
-        return CheckOutcome(CookieStatus.DEAD, "no-auth-markers", latency)
+        return CheckOutcome(CookieStatus.DEAD, "no-auth-markers len=${body.length}", latency)
     }
 
     data class CheckOutcome(

@@ -14,6 +14,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 
@@ -29,6 +34,14 @@ private const val MBASIC = "https://mbasic.facebook.com"
 @Composable
 fun CookieWebViewScreen(cookie: String, onClose: () -> Unit) {
     BackHandler(onBack = onClose)
+    var webView by remember { mutableStateOf<WebView?>(null) }
+    // Inject first (awaited), load only after cookies are applied
+    LaunchedEffect(webView, cookie) {
+        val wv = webView ?: return@LaunchedEffect
+        com.hatake.cookiechecker.CookieInjector.clearAll()
+        injectBookmarkletCookie(cookie)
+        wv.loadUrl(MBASIC)
+    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -44,8 +57,7 @@ fun CookieWebViewScreen(cookie: String, onClose: () -> Unit) {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     webViewClient = WebViewClient()
-                    injectBookmarkletCookie(cookie)
-                    loadUrl(MBASIC)
+                    webView = this
                 }
             }
         )
@@ -53,7 +65,7 @@ fun CookieWebViewScreen(cookie: String, onClose: () -> Unit) {
 }
 
 /** Same parsing as the bookmarklet: pipe-split picks the c_user segment, then k=v pairs. */
-private fun injectBookmarkletCookie(raw: String) {
+private suspend fun injectBookmarkletCookie(raw: String) {
     val count = com.hatake.cookiechecker.CookieInjector.inject(raw)
     Log.d(TAG, "WEBVIEW injected $count pairs, loading $MBASIC")
 }

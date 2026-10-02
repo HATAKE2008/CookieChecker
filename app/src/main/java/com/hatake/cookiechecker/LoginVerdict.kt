@@ -9,7 +9,7 @@ object LoginVerdict {
 
     data class Verdict(val status: CookieStatus, val detail: String)
 
-    fun decide(url: String, html: String): Verdict {
+    fun decide(url: String, html: String, userId: String = ""): Verdict {
         val u = url.lowercase()
         val lower = html.lowercase()
         // URL verdicts are authoritative (unescaped, final after redirects)
@@ -19,10 +19,23 @@ object LoginVerdict {
         if (u.contains("home.php")) {
             return Verdict(CookieStatus.LIVE, "home.php")
         }
+        // STRONG DEAD: password field exists (never on a logged-in home)
+        if (lower.contains("type=\"password\"") || lower.contains("type='password'") ||
+            lower.contains("name=\"pass\"") || lower.contains("name='pass'") ||
+            lower.contains("id=\"login_form\"") || lower.contains("id='login_form'")
+        ) {
+            return Verdict(CookieStatus.DEAD, "login-form")
+        }
+        // STRONG LIVE: our own user id embedded in the page
+        if (userId.isNotEmpty() && html.contains(userId)) {
+            return Verdict(CookieStatus.LIVE, "user-id-match")
+        }
         // Authenticated markers
         if (lower.contains("mbasic_logout_button") ||
             lower.contains("mbasic_logout") ||
-            lower.contains("home.php")
+            lower.contains("home.php") ||
+            lower.contains("log out") ||
+            lower.contains("logout")
         ) {
             return Verdict(CookieStatus.LIVE, "authenticated")
         }
@@ -36,7 +49,7 @@ object LoginVerdict {
         if (lower.contains("checkpoint")) {
             return Verdict(CookieStatus.DEAD, "checkpoint")
         }
-        return Verdict(CookieStatus.DEAD, "no-auth-markers")
+        return Verdict(CookieStatus.DEAD, "no-auth-markers len=${html.length}")
     }
 
     /** True when the page has settled enough to trust the verdict. */
@@ -46,6 +59,7 @@ object LoginVerdict {
         if (u.contains("/login") || u.contains("checkpoint") || u.contains("home.php")) return true
         if (lower.contains("mbasic_logout_button") || lower.contains("mbasic_logout")) return true
         if (lower.contains("mbasic_inline_login_button")) return true
+        if (lower.contains("type=") && lower.contains("password")) return true
         if (lower.contains("name=") && lower.contains("login")) return true
         return false
     }

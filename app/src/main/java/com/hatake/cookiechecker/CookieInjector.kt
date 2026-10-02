@@ -22,24 +22,35 @@ object CookieInjector {
         return raw
     }
 
-    /** Returns number of pairs injected. */
-    fun inject(raw: String): Int {
-        val cookieStr = pickSegment(raw)
+    /** Returns number of pairs injected. Awaits every setCookie before returning. */
+    suspend fun inject(raw: String): Int {
         val cm = CookieManager.getInstance()
         cm.setAcceptCookie(true)
-        cm.removeAllCookies(null)
         var count = 0
-        for (item in cookieStr.split(';')) {
-            val eq = item.indexOf('=')
-            if (eq <= 0) continue
-            val k = item.substring(0, eq).trim()
-            val v = item.substring(eq + 1).trim()
-            if (k.isEmpty()) continue
-            cm.setCookie("https://.facebook.com", "$k=$v; Path=/; Domain=.facebook.com")
-            count++
+        for (pair in CookieTools.pairs(pickSegment(raw))) {
+            if (awaitSet(SETTING_URL, "$pair; Path=/; Domain=.facebook.com")) count++
         }
         cm.flush()
         return count
+    }
+
+    private const val SETTING_URL = "https://mbasic.facebook.com"
+
+    private suspend fun awaitSet(url: String, value: String): Boolean {
+        return try {
+            suspendCancellableCoroutine { cont ->
+                try {
+                    CookieManager.getInstance().setCookie(url, value) { ok ->
+                        cont.resume(ok)
+                    }
+                } catch (t: Throwable) {
+                    Log.e(TAG, "setCookie failed: ${t.message}")
+                    cont.resume(false)
+                }
+            }
+        } catch (_: Exception) {
+            false
+        }
     }
 
     /** Clear all cookies, suspending until done. */

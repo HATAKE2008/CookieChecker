@@ -88,7 +88,8 @@ fun WebLoginCheckScreen(vm: CookieViewModel, onClose: () -> Unit) {
             val pairs = CookieInjector.inject(item.raw)
             Log.d(TAG, "WEBCHECK item #${item.id} injected $pairs pairs, loading $MBASIC")
             wv.loadUrl(MBASIC)
-            val verdict = awaitVerdict(wv, { goOn && !finished }, { paused })
+            val verdict = awaitVerdict(wv, { goOn && !finished }, { paused },
+                com.hatake.cookiechecker.CookieTools.extractUserId(item.raw))
             val latency = SystemClock.elapsedRealtime() - t0
             if (verdict == null) {
                 Log.d(TAG, "WEBCHECK item #${item.id} stopped by user")
@@ -184,7 +185,8 @@ fun WebLoginCheckScreen(vm: CookieViewModel, onClose: () -> Unit) {
 private suspend fun awaitVerdict(
     wv: WebView,
     keepGoing: () -> Boolean,
-    isPaused: () -> Boolean
+    isPaused: () -> Boolean,
+    userId: String
 ): LoginVerdict.Verdict? {
     val t0 = SystemClock.elapsedRealtime()
     var url = ""
@@ -200,14 +202,16 @@ private suspend fun awaitVerdict(
         }
         html = wv.evalHtml()
         if (LoginVerdict.isConclusive(url, html)) {
-            return LoginVerdict.decide(url, html)
+            val v = LoginVerdict.decide(url, html, userId)
+            android.util.Log.d(TAG, "WEBCHECK settled url=$url")
+            return v
         }
         delay(1000)
     }
     if (html.isBlank()) {
-        return LoginVerdict.Verdict(CookieStatus.ERROR, "webview-timeout")
+        return LoginVerdict.Verdict(CookieStatus.ERROR, "webview-timeout url=$url")
     }
-    return LoginVerdict.decide(url, html)
+    return LoginVerdict.decide(url, html, userId)
 }
 
 private suspend fun WebView.evalHtml(): String {
