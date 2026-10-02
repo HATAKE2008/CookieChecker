@@ -2,6 +2,7 @@ package com.hatake.cookiechecker
 
 import android.content.ContentResolver
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -9,6 +10,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+
+private const val TAG = "CookieChecker"
 
 class CookieViewModel : ViewModel() {
 
@@ -80,18 +83,26 @@ class CookieViewModel : ViewModel() {
 
     // ---- Actions ----
     fun start() {
+        val repoCount = repository.items.value.size
+        Log.d(TAG, "STAGE1 start-clicked repoCount=$repoCount inputLen=${_ui.value.inputText.length} running=${repository.running}")
         // NOTE: read repository.items.value directly (synchronous).
         // _ui.value.items is only an async mirror and is still empty
         // right after parsing, which used to abort every first Start tap.
         if (repository.items.value.isEmpty()) {
             val parsed = FileParser.extractCookiesFromText(_ui.value.inputText)
+            Log.d(TAG, "STAGE2 parsed-from-input count=${parsed.size}")
             if (parsed.isEmpty()) {
+                Log.d(TAG, "STAGE2 abort: no valid cookies found")
                 _ui.update { it.copy(errorMessage = "Paste cookies or import a file first.") }
                 return
             }
             repository.setCookies(parsed)
         }
-        if (repository.running) return // already checking
+        Log.d(TAG, "STAGE2 items-received count=${repository.items.value.size}")
+        if (repository.running) {
+            Log.d(TAG, "STAGE2 abort: checker already running")
+            return // already checking
+        }
         _ui.update { it.copy(isRunning = true, isPaused = false, errorMessage = null) }
         repository.start(
             delayMs = _ui.value.delayMs,

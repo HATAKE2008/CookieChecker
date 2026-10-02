@@ -1,5 +1,6 @@
 package com.hatake.cookiechecker
 
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -7,6 +8,9 @@ import okhttp3.Request
 import java.net.SocketTimeoutException
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLException
+import kotlin.coroutines.cancellation.CancellationException
+
+private const val TAG = "CookieChecker"
 
 /**
  * Validation engine. Sends each cookie to mbasic endpoint with a mobile
@@ -26,12 +30,14 @@ class CookieCheckerService(
         .writeTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    suspend fun check(cookie: String, targetUrl: String): CheckOutcome =
+    suspend fun check(cookie: String, targetUrl: String, label: String = ""): CheckOutcome =
         withContext(Dispatchers.IO) {
             val start = System.currentTimeMillis()
+            val url = targetUrl.ifBlank { DEFAULT_TARGET }
+            Log.d(TAG, "STAGE5 $label request started target=$url cookieLen=${cookie.length}")
             try {
                 val request = Request.Builder()
-                    .url(targetUrl.ifBlank { DEFAULT_TARGET })
+                    .url(url)
                     .header("User-Agent", MOBILE_UA)
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                     .header("Accept-Language", "en-US,en;q=0.9")
@@ -43,39 +49,46 @@ class CookieCheckerService(
                     val latency = System.currentTimeMillis() - start
                     val location = resp.header("Location").orEmpty()
                     val code = resp.code
-
-                    // --- Redirect-based verdicts (cheap, no body read) ---
-                    if (location.contains("/login", ignoreCase = true) ||
-                        location.contains("checkpoint", ignoreCase = true)
-                    ) {
-                        return@withContext CheckOutcome(CookieStatus.DEAD, "redirect->$location", latency)
-                    }
-                    if (location.contains("home.php", ignoreCase = true)) {
-                        return@withContext CheckOutcome(CookieStatus.LIVE, "redirect->$location", latency)
-                    }
-                    // 3xx without a login location but pointing into home = live
-                    if (code in 300..399 && location.isNotBlank()) {
-                        return@withContext CheckOutcome(CookieStatus.DEAD, "redirect->$location", latency)
-                    }
-
-                    // --- Body-based verdicts ---
+                    Log.d(TAG, "STAGE5 $label response code=$code location=$location")
                     val body = try {
                         resp.body?.string().orEmpty()
                     } catch (_: Exception) {
                         ""
                     }
-                    classifyBody(body, latency)
+                    val outcome = decide(code, location, body, latency)
+                    Log.d(TAG, "STAGE5 $label verdict=${outcome.status} (${outcome.detail}) latency=${outcome.latencyMs}ms")
+                    return@withContext outcome
                 }
-            } catch (e: SocketTimeoutException) {
-                CheckOutcome(CookieStatus.ERROR, "timeout: ${e.message}", System.currentTimeMillis() - start)
-            } catch (e: SSLException) {
-                CheckOutcome(CookieStatus.ERROR, "ssl: ${e.message}", System.currentTimeMillis() - start)
-            } catch (e: java.io.IOException) {
-                CheckOutcome(CookieStatus.ERROR, "network: ${e.message}", System.currentTimeMillis() - start)
-            } catch (e: Exception) {
-                CheckOutcome(CookieStatus.ERROR, "error: ${e.message}", System.currentTimeMillis() - start)
+            } catch (t: Throwable) {
+                if (t is CancellationException) throw t // pause/cancel must propagate
+                val msg = when (t) {
+                    is SocketTimeoutException -> "timeout: ${t.message}"
+                    is SSLException -> "ssl: ${t.message}"
+                    is java.io.IOException -> "network: ${t.message}"
+                    else -> "error: ${t.message}"
+                }
+                Log.e(TAG, "STAGE5 $label request failed: $msg")
+                CheckOutcome(CookieStatus.ERROR, msg, System.currentTimeMillis() - start)
             }
         }
+
+    private fun decide(code: Int, location: String, body: String, latency: Long): CheckOutcome {
+        // --- Redirect-based verdicts (cheap, no body read) ---
+        if (location.contains("/login", ignoreCase = true) ||
+            location.contains("checkpoint", ignoreCase = true)
+        ) {
+            return CheckOutcome(CookieStatus.DEAD, "redirect->$location", latency)
+        }
+        if (location.contains("home.php", ignoreCase = true)) {
+            return CheckOutcome(CookieStatus.LIVE, "redirect->$location", latency)
+        }
+        // 3xx elsewhere (not home/login) = not authenticated
+        if (code in 300..399 && location.isNotBlank()) {
+            return CheckOutcome(CookieStatus.DEAD, "redirect->$location", latency)
+        }
+        // --- Body-based verdicts ---
+        return classifyBody(body, latency)
+    }
 
     private fun classifyBody(body: String, latency: Long): CheckOutcome {
         if (body.isBlank()) return CheckOutcome(CookieStatus.ERROR, "empty-body", latency)
