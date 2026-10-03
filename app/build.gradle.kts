@@ -72,6 +72,10 @@ dependencies {
     // Networking — OkHttp only (lightweight, no Retrofit needed)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
+    // OTP Fetcher (Java + AndroidX Views)
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.recyclerview:recyclerview:1.3.2")
+
     // Debug tooling
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
