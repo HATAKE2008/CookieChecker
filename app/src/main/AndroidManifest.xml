@@ -13,6 +13,10 @@
         android:theme="@style/Theme.CookieChecker"
         tools:targetApi="31">
         <activity
+            android:name=".otp.OtpFetcherActivity"
+            android:exported="true"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
+        <activity
             android:name=".MainActivity"
             android:exported="true"
             android:theme="@style/Theme.CookieChecker">
